@@ -1,0 +1,28 @@
+server:
+  port: 8080
+  
+spring:
+  application:
+    name: emberalert-backend
+  
+  # DISABLE database auto-configuration for Day 2
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      
+# ML Service configuration
+ml:
+  service:
+    url: http://localhost:5000
+    predict-endpoint: /predict
+    batch-predict-endpoint: /batch_predict
+    health-endpoint: /health
+    timeout: 5000
+    
+# Logging
+logging:
+  level:
+    com.emberalert: INFO
+    org.springframework.web: INFO
