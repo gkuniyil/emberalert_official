@@ -1,59 +1,154 @@
 package com.emberalert.service;
 
-import com.emberalert.model.FireRiskRequest;
+import com.emberalert.entity.FirePrediction;           // The database entity we created
+import com.emberalert.model.FireRiskRequest;           // User input model
+import com.emberalert.repository.FirePredictionRepository;  // Database interface
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.RestClientException;
+import org.springframework.cache.annotation.Cacheable;  // ADD THIS LINE!
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
- * Client for calling the Python ML service
- * This is the bridge between Java backend and Python ML model
+ * ML Service Client - NOW WITH DATABASE STORAGE!
+ * 
+ * What this class does:
+ * 1. Calls Python ML service to get fire risk prediction
+ * 2. Saves the prediction to PostgreSQL database
+ * 3. Can retrieve historical predictions
  */
-@Service
+@Service  // Tells Spring Boot: "I'm a service class, manage me!"
 public class MLServiceClient {
     
+    // Read ML service URL from application.yml (http://localhost:5000)
     @Value("${ml.service.url}")
     private String mlServiceUrl;
     
+    // HTTP client to make calls to Python
     private final RestTemplate restTemplate;
     
+    // DATABASE REPOSITORY - NEW!
+    // This lets us save/retrieve from PostgreSQL
+    @Autowired  // Spring Boot automatically injects the repository
+    private FirePredictionRepository repository;
+    
+    // Constructor - creates RestTemplate
     public MLServiceClient() {
         this.restTemplate = new RestTemplate();
     }
     
     /**
-     * Calls Python ML service to get fire risk prediction
+     * Main method: Get prediction from ML service AND save to database
+     * 
+     * Flow:
+     * 1. Call Python ML service
+     * 2. Get prediction back
+     * 3. Save to database
+     * 4. Return prediction
      */
-    public Map<String, Object> predictFireRisk(FireRiskRequest request) {
+    /**
+ * Main method: Get prediction from ML service AND save to database
+ * NOW WITH CACHING!
+ */
+@Cacheable(value = "predictions", key = "#request.latitude + '-' + #request.longitude + '-' + #request.temperature")
+public Map<String, Object> predictFireRisk(FireRiskRequest request) {
+    try {
+        System.out.println("🔥 CACHE MISS - Calling ML service at: " + mlServiceUrl + "/predict");
+        
+        // Build request payload for Python
+        Map<String, Object> payload = buildMLPayload(request);
+        
+        // Call Python ML service
+        String url = mlServiceUrl + "/predict";
+        Map<String, Object> mlResponse = restTemplate.postForObject(
+            url, 
+            payload, 
+            Map.class
+        );
+        
+        System.out.println("✅ ML service responded successfully");
+        
+        // Save to database
+        savePredictionToDatabase(request, mlResponse);
+        
+        return mlResponse;
+        
+    } catch (RestClientException e) {
+        System.err.println("❌ ML service error: " + e.getMessage());
+        throw new RuntimeException("Failed to get prediction from ML service: " + e.getMessage());
+    }
+}
+    
+    /**
+     * NEW METHOD: Saves prediction to PostgreSQL database
+     * 
+     * Takes the user's request and ML's response, creates database record
+     */
+    private void savePredictionToDatabase(FireRiskRequest request, Map<String, Object> mlResponse) {
         try {
-            System.out.println("🔥 Calling ML service at: " + mlServiceUrl + "/predict");
+            // Create new database entity
+            FirePrediction prediction = new FirePrediction();
             
-            // Build request payload for Python service
-            Map<String, Object> payload = buildMLPayload(request);
+            // Set input data (what user sent)
+            prediction.setLatitude(request.getLatitude());
+            prediction.setLongitude(request.getLongitude());
+            prediction.setTemperature(request.getTemperature());
+            prediction.setHumidity(request.getHumidity());
+            prediction.setWindSpeed(request.getWindSpeed());
+            prediction.setVegetationDensity(request.getVegetationDensity());
+            prediction.setSlope(request.getSlope());
+            prediction.setElevation(request.getElevation());
+            prediction.setDaysSinceRain(request.getDaysSinceRain());
+            prediction.setProximityToWater(request.getProximityToWater());
             
-            // Call Python ML service
-            String url = mlServiceUrl + "/predict";
-            Map<String, Object> response = restTemplate.postForObject(
-                url, 
-                payload, 
-                Map.class
-            );
+            // Set output data (what ML model predicted)
+            Double riskScore = ((Number) mlResponse.get("risk_score")).doubleValue();
+            String riskCategory = (String) mlResponse.get("risk_category");
+            Double confidence = ((Number) mlResponse.get("model_confidence")).doubleValue();
             
-            System.out.println("✅ ML service responded successfully");
-            return response;
+            prediction.setRiskScore(riskScore);
+            prediction.setRiskCategory(riskCategory);
+            prediction.setModelConfidence(confidence);
             
-        } catch (RestClientException e) {
-            System.err.println("❌ ML service error: " + e.getMessage());
-            throw new RuntimeException("Failed to get prediction from ML service: " + e.getMessage());
+            // SAVE TO DATABASE - This one line saves everything!
+            repository.save(prediction);
+            
+            System.out.println("💾 Prediction saved to database with ID: " + prediction.getId());
+            
+        } catch (Exception e) {
+            System.err.println("⚠️ Failed to save to database: " + e.getMessage());
+            // Don't throw error - prediction still works even if save fails
         }
     }
     
     /**
-     * Checks if ML service is healthy and responding
+     * NEW METHOD: Get all predictions from database
+     */
+    public List<FirePrediction> getAllPredictions() {
+        return repository.findAll();
+    }
+    
+    /**
+     * NEW METHOD: Get predictions near a location
+     */
+    public List<FirePrediction> getPredictionsNearLocation(Double latitude, Double longitude) {
+        return repository.findByLocationNear(latitude, longitude);
+    }
+    
+    /**
+     * NEW METHOD: Get high-risk predictions
+     */
+    public List<FirePrediction> getHighRiskPredictions(Double threshold) {
+        return repository.findByRiskScoreGreaterThan(threshold);
+    }
+    
+    /**
+     * Checks if ML service is healthy
      */
     public boolean isMLServiceHealthy() {
         try {
@@ -67,7 +162,7 @@ public class MLServiceClient {
     }
     
     /**
-     * Converts our Java request to Python ML service format
+     * Converts Java request to Python format
      */
     private Map<String, Object> buildMLPayload(FireRiskRequest request) {
         Map<String, Object> payload = new HashMap<>();

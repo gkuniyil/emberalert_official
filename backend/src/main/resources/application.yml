@@ -5,17 +5,38 @@ spring:
   application:
     name: emberalert-backend
   
-  # DISABLE database auto-configuration for Day 2
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+  # ENABLE DATABASE - Updated from Day 2!
+  datasource:
+    url: jdbc:postgresql://localhost:5432/emberalert
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    
+  jpa:
+    hibernate:
+      ddl-auto: update  # Auto-create/update tables
+    show-sql: true      # Show SQL in logs (helpful for debugging)
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  
+  # ENABLE REDIS CACHE - NEW!
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000ms
+  
+  cache:
+    type: redis
+    redis:
+      time-to-live: 600000  # Cache for 10 minutes (600,000 ms)
       
 # ML Service configuration
 ml:
   service:
-    url: http://localhost:5000
+    url: http://localhost:5001
     predict-endpoint: /predict
     batch-predict-endpoint: /batch_predict
     health-endpoint: /health
@@ -26,3 +47,4 @@ logging:
   level:
     com.emberalert: INFO
     org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG  # Show SQL queries
